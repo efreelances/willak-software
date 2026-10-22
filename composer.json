@@ -1,0 +1,13 @@
+{
+    "name": "willak/app",
+    "description": "Sistema Willak",
+    "authors": [
+        {
+            "name": "efreelances",
+            "email": "efreelances@gmail.com"
+        }
+    ],
+    "require": {
+        "phpmailer/phpmailer": "^7.1"
+    }
+}
