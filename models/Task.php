@@ -82,7 +82,9 @@ class Task {
         ]);
 
         $taskId = $this->db->lastInsertId();
-        $this->scheduleReminders($taskId, $userId, $data['end_date'], $data['reminder_days'] ?? []);
+        if (in_array($status, ['activo', 'pendiente', 'en_proceso'], true)) {
+            $this->scheduleReminders($taskId, $userId, $data['end_date'], $data['reminder_days'] ?? []);
+        }
 
         return ['success' => true, 'id' => $taskId];
     }
@@ -123,26 +125,41 @@ class Task {
         $stmt = $this->db->prepare($sql);
         $stmt->execute($params);
 
-        // Re-programar recordatorios
+        // Reprogramar únicamente recordatorios pendientes para el responsable actual.
         $this->deleteReminders($id);
-        $this->scheduleReminders($id, $task['user_id'], $data['end_date'], $data['reminder_days'] ?? []);
+        $effectiveUserId = Auth::isAdmin() ? (int)($data['user_id'] ?? $task['user_id']) : (int)$task['user_id'];
+        if (in_array($newStatus, ['activo', 'pendiente', 'en_proceso'], true)) {
+            $this->scheduleReminders($id, $effectiveUserId, $data['end_date'], $data['reminder_days'] ?? []);
+        }
 
         return ['success' => true];
     }
 
     public function archive($id) {
         $stmt = $this->db->prepare("UPDATE tasks SET status = 'archivado' WHERE id = :id");
-        return $stmt->execute([':id' => $id]);
+        $ok = $stmt->execute([':id' => $id]);
+        if ($ok) $this->deleteReminders($id);
+        return $ok;
     }
 
     public function reactivate($id) {
+        $task = $this->find($id);
+        if (!$task) return false;
         $stmt = $this->db->prepare("UPDATE tasks SET status = 'pendiente' WHERE id = :id");
-        return $stmt->execute([':id' => $id]);
+        $ok = $stmt->execute([':id' => $id]);
+        if ($ok) {
+            $this->deleteReminders($id);
+            $days = json_decode($task['reminder_days'] ?? '[]', true);
+            if (is_array($days)) $this->scheduleReminders($id, (int)$task['user_id'], $task['end_date'], $days);
+        }
+        return $ok;
     }
 
     public function cancel($id) {
         $stmt = $this->db->prepare("UPDATE tasks SET status = 'cancelado' WHERE id = :id");
-        return $stmt->execute([':id' => $id]);
+        $ok = $stmt->execute([':id' => $id]);
+        if ($ok) $this->deleteReminders($id);
+        return $ok;
     }
 
     private function validate($data) {

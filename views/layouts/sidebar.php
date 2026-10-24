@@ -5,7 +5,7 @@ $current = $currentPage ?? '';
 // Obtener colores de configuración
 $settings = [];
 try {
-    $stmt = Database::getInstance()->getConnection()->query("SELECT setting_key, setting_value FROM app_settings WHERE setting_key IN ('primary_color', 'accent_color')");
+    $stmt = Database::getInstance()->getConnection()->query("SELECT setting_key, setting_value FROM settings WHERE setting_key IN ('primary_color', 'accent_color')");
     while ($row = $stmt->fetch()) {
         $settings[$row['setting_key']] = $row['setting_value'];
     }

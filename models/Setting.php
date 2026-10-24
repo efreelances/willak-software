@@ -1,86 +1,58 @@
 <?php
 class Setting {
     private $db;
-
-    public function __construct() {
-        $this->db = Database::getInstance()->getConnection(); 
-    }
+    public function __construct() { $this->db = Database::getInstance()->getConnection(); }
 
     public function get($key, $default = null) {
-        $stmt = $this->db->prepare("SELECT setting_value FROM app_settings WHERE setting_key = ?");
+        $stmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = ?");
         $stmt->execute([$key]);
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        return $row ? $row['setting_value'] : $default;
+        $value = $stmt->fetchColumn();
+        return $value === false ? $default : $value;
     }
 
     public function getAll() {
-        $stmt = $this->db->query("SELECT setting_key, setting_value FROM app_settings");
+        $stmt = $this->db->query("SELECT setting_key, setting_value FROM settings");
         $settings = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $settings[$row['setting_key']] = $row['setting_value'];
-        }
+        foreach ($stmt->fetchAll(PDO::FETCH_ASSOC) as $row) $settings[$row['setting_key']] = $row['setting_value'];
         return $settings;
     }
 
     public function set($key, $value, $type = 'string', $category = 'general', $description = '') {
-        $stmt = $this->db->prepare("
-            INSERT INTO app_settings (setting_key, setting_value, setting_type, category, description) 
-            VALUES (?, ?, ?, ?, ?) 
-            ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = CURRENT_TIMESTAMP
-        ");
-        return $stmt->execute([$key, $value, $type, $category, $description, $value]);
+        if (is_array($value)) $value = json_encode($value, JSON_UNESCAPED_UNICODE);
+        $stmt = $this->db->prepare("INSERT INTO settings (setting_key, setting_value, description)
+            VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value), description=VALUES(description)");
+        return $stmt->execute([$key, (string)$value, $description ?: $category]);
     }
 
     public function setBatch($data, $category = 'general') {
-        $stmt = $this->db->prepare("
-            INSERT INTO app_settings (setting_key, setting_value, setting_type, category) 
-            VALUES (?, ?, ?, ?) 
-            ON DUPLICATE KEY UPDATE setting_value = ?, updated_at = CURRENT_TIMESTAMP
-        ");
-        foreach ($data as $key => $value) {
-            $val = is_array($value) ? json_encode($value) : $value;
-            $type = is_numeric($value) ? 'number' : 'string';
-            $stmt->execute([$key, $val, $type, $category, $val]);
-        }
+        foreach ($data as $key => $value) $this->set($key, $value, null, $category);
         return true;
     }
 
     public function getChannels() {
-        $stmt = $this->db->query("SELECT * FROM notification_channels");
         $channels = [];
-        while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-            $channels[$row['channel_key']] = [
-                'channel_name' => $row['channel_name'],
-                'is_active' => $row['is_active'],
-                'config' => json_decode($row['config_data'], true) ?: []
+        foreach (['email', 'whatsapp', 'telegram'] as $channel) {
+            $config = json_decode((string)$this->get('notification_' . $channel . '_config', '{}'), true) ?: [];
+            $channels[$channel] = [
+                'channel_name' => ucfirst($channel),
+                'is_active' => (int)$this->get('notification_' . $channel . '_active', 0),
+                'config' => $config
             ];
         }
         return $channels;
     }
 
     public function updateChannel($channelKey, $isActive, $configData) {
-        $stmt = $this->db->prepare("
-            INSERT INTO notification_channels (channel_key, channel_name, is_active, config_data) 
-            VALUES (?, ?, ?, ?) 
-            ON DUPLICATE KEY UPDATE is_active = ?, config_data = ?, updated_at = CURRENT_TIMESTAMP
-        ");
-        
-        // Nombres legibles para cada canal
-        $names = [
-            'email' => 'Correo Electrónico',
-            'whatsapp' => 'WhatsApp',
-            'telegram' => 'Telegram'
-        ];
-        
-        $channelName = $names[$channelKey] ?? ucfirst($channelKey);
-        
-        return $stmt->execute([
-            $channelKey, 
-            $channelName, 
-            $isActive, 
-            json_encode($configData), 
-            $isActive, 
-            json_encode($configData)
-        ]);
+        if (!in_array($channelKey, ['email', 'whatsapp', 'telegram'], true)) return false;
+        $this->db->beginTransaction();
+        try {
+            $this->set('notification_' . $channelKey . '_config', $configData, null, 'notifications', 'Configuración del canal ' . $channelKey);
+            $this->set('notification_' . $channelKey . '_active', (int)(bool)$isActive, null, 'notifications', 'Canal habilitado');
+            $this->db->commit();
+            return true;
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) $this->db->rollBack();
+            throw $e;
+        }
     }
 }

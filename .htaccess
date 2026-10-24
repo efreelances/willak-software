@@ -1,0 +1,37 @@
+# ============================================
+# WILLAK - .htaccess definitivo
+# ============================================
+
+# Desactivar listado de directorios (SEGURIDAD)
+Options -Indexes
+
+# Activar Rewrite
+RewriteEngine On
+RewriteBase /willak/
+
+# ============================================
+# 1. BLOQUEAR acceso directo a carpetas sensibles
+# ============================================
+RewriteRule ^config/ - [F,L]
+RewriteRule ^core/ - [F,L]
+RewriteRule ^models/ - [F,L]
+RewriteRule ^sql/ - [F,L]
+RewriteRule ^\.htaccess$ - [F,L]
+RewriteRule ^\.env$ - [F,L]
+
+# ============================================
+# 2. Permitir acceso a assets (CSS, JS, imágenes)
+# ============================================
+RewriteRule ^assets/ - [L]
+
+# ============================================
+# 3. Si el archivo/directorio real existe, servirlo
+# ============================================
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# ============================================
+# 4. Todo lo demás → Router (index.php)
+# ============================================
+RewriteRule ^ index.php [QSA,L]

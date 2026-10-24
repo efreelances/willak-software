@@ -38,7 +38,8 @@ class WhatsAppChannel {
         $url = "https://api.callmebot.com/whatsapp.php?phone=" . urlencode($configPhone) 
              . "&text=" . urlencode($message) . "&apikey=" . urlencode($apiKey);
         
-        $response = @file_get_contents($url);
+        $context = stream_context_create(['http' => ['timeout' => 15]]);
+        $response = @file_get_contents($url, false, $context);
         
         if ($response && strpos($response, 'Message queued') !== false) {
             return ['success' => true];
@@ -70,6 +71,8 @@ class WhatsAppChannel {
 
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
@@ -78,10 +81,14 @@ class WhatsAppChannel {
         ]);
 
         $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $curlError = curl_error($ch);
+        $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($httpCode === 200) {
+        if ($response === false) {
+            return ['success' => false, 'error' => 'WhatsApp: error de conexión: ' . $curlError];
+        }
+        if ($httpCode === 200 || $httpCode === 201) {
             return ['success' => true];
         }
 
@@ -104,6 +111,8 @@ class WhatsAppChannel {
         
         $ch = curl_init($url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
+        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
         curl_setopt($ch, CURLOPT_POST, true);
         curl_setopt($ch, CURLOPT_POSTFIELDS, http_build_query([
             'From' => $from,

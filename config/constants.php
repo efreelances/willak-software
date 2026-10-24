@@ -2,7 +2,8 @@
 // Rutas base
 define('BASE_PATH', dirname(__DIR__) . '/');
 define('BASE_URL', rtrim(dirname($_SERVER['SCRIPT_NAME']), '/\\'));
-define('APP_URL', (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on' ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . BASE_URL);
+$isHttps = !empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+define('APP_URL', ($isHttps ? 'https' : 'http') . '://' . $_SERVER['HTTP_HOST'] . BASE_URL);
 
 // App
 define('APP_NAME', 'Willak');

@@ -15,11 +15,15 @@ class SettingsController {
         // Cargar configuración de canales de notificación
         $channels = [];
         try {
-            $stmt = $this->db->query("SELECT * FROM notification_channels ORDER BY id ASC");
-            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
-                $channels[$row['channel_key']] = [
-                    'is_active' => $row['is_active'],
-                    'config' => json_decode($row['config_data'], true) ?: []
+            foreach (['email' => 'notification_email_config', 'whatsapp' => 'notification_whatsapp_config', 'telegram' => 'notification_telegram_config'] as $key => $settingKey) {
+                $stmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = :key LIMIT 1");
+                $stmt->execute([':key' => $settingKey]);
+                $raw = $stmt->fetchColumn();
+                $activeStmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = :key LIMIT 1");
+                $activeStmt->execute([':key' => 'notification_' . $key . '_active']);
+                $channels[$key] = [
+                    'is_active' => (int)$activeStmt->fetchColumn(),
+                    'config' => $raw ? (json_decode($raw, true) ?: []) : []
                 ];
             }
         } catch (Exception $e) {
@@ -47,6 +51,43 @@ class SettingsController {
         $data = $_POST['data'] ?? [];
         $channelConfig = $_POST['channel_config'] ?? [];
         $notificationRules = $_POST['notification_rules'] ?? [];
+        if (!is_array($notificationRules)) {
+            $notificationRules = [];
+        }
+
+        // Compatibilidad con ambos formatos de nombres de formulario usados
+        // en versiones anteriores: notification_days_1 y days_1.
+        $ruleAliases = [
+            'notification_days_1' => ['notification_days_1', 'days_1'],
+            'notification_days_2' => ['notification_days_2', 'days_2'],
+            'notification_days_3' => ['notification_days_3', 'days_3'],
+        ];
+        foreach ($ruleAliases as $canonicalKey => $aliases) {
+            foreach ($aliases as $alias) {
+                if (array_key_exists($alias, $notificationRules)) {
+                    $notificationRules[$canonicalKey] = $notificationRules[$alias];
+                    break;
+                }
+            }
+        }
+
+        // HTML no envía checkboxes desmarcados. Normalizarlos explícitamente
+        // para que al guardar una sección también se persistan como 0.
+        $checkboxesBySection = [
+            'security' => ['pwd_require_uppercase', 'pwd_require_number', 'pwd_require_special', '2fa_enabled', '2fa_required_admin', '2fa_required_user'],
+            'tasks' => ['task_require_type', 'task_require_description'],
+            'clients' => ['client_require_document', 'client_require_email', 'client_require_phone', 'client_validate_email', 'client_unique_document'],
+            'reports' => ['report_include_charts'],
+            'system' => ['backup_enabled', 'maintenance_mode'],
+        ];
+        foreach ($checkboxesBySection[$section] ?? [] as $checkboxKey) {
+            $data[$checkboxKey] = isset($data[$checkboxKey]) && (string)$data[$checkboxKey] === '1' ? '1' : '0';
+        }
+        // Si el usuario desmarca todos los formatos, guardar un array vacío,
+        // en vez de conservar silenciosamente la selección anterior.
+        if ($section === 'reports' && !isset($data['report_formats'])) {
+            $data['report_formats'] = [];
+        }
 
         try {
             $this->db->beginTransaction();
@@ -58,61 +99,91 @@ class SettingsController {
                 }
                 
                 $stmt = $this->db->prepare("
-                    INSERT INTO app_settings (setting_key, setting_value, category) 
-                    VALUES (:key, :value, :category)
-                    ON DUPLICATE KEY UPDATE setting_value = :value2
+                    INSERT INTO settings (setting_key, setting_value, description)
+                    VALUES (:key, :value, :description)
+                    ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
                 ");
-                $stmt->execute([
-                    ':key' => $key,
-                    ':value' => $value,
-                    ':category' => $section,
-                    ':value2' => $value
-                ]);
+                $stmt->execute([':key' => $key, ':value' => $value, ':description' => 'Configuración de Willak: ' . $section]);
             }
 
-            // 2. Guardar reglas de notificación
-            foreach ($notificationRules as $key => $value) {
-                $stmt = $this->db->prepare("
-                    INSERT INTO app_settings (setting_key, setting_value, category) 
-                    VALUES (:key, :value, 'notifications')
-                    ON DUPLICATE KEY UPDATE setting_value = :value2
-                ");
-                $stmt->execute([
-                    ':key' => $key,
-                    ':value' => (int)$value,
-                    ':value2' => (int)$value
-                ]);
-            }
+            // 2. Guardar reglas de notificación.
+            // Las claves deben coincidir con las que lee la vista:
+            // notification_days_1, notification_days_2 y notification_days_3.
+            $allowedNotificationRules = [
+                'notification_days_1' => 'Primer aviso',
+                'notification_days_2' => 'Segundo aviso',
+                'notification_days_3' => 'Aviso crítico',
+            ];
 
-            // 3. Guardar configuración de canales
-            foreach ($channelConfig as $channelKey => $config) {
-                // Limpiar campos vacíos de contraseñas para no sobrescribir con vacío si no se cambió
-                if ($channelKey === 'email' && empty($config['password'])) {
-                    $stmt = $this->db->prepare("SELECT config_data FROM notification_channels WHERE channel_key = 'email'");
-                    $stmt->execute();
-                    $currentConfig = json_decode($stmt->fetchColumn(), true);
-                    $config['password'] = $currentConfig['password'] ?? '';
+            foreach ($allowedNotificationRules as $key => $label) {
+                if ($section === 'notifications' && !array_key_exists($key, $notificationRules)) {
+                    throw new InvalidArgumentException('No se recibió el campo de configuración: ' . $label . '. Recarga la página y vuelve a guardar.');
+                }
+                if (!array_key_exists($key, $notificationRules)) {
+                    continue;
                 }
 
+                $rawValue = $notificationRules[$key];
+                if (is_array($rawValue) || filter_var($rawValue, FILTER_VALIDATE_INT) === false) {
+                    throw new InvalidArgumentException('El valor de "' . $label . '" debe ser un número entero.');
+                }
+
+                $days = (int)$rawValue;
+                if ($days < 1 || $days > 365) {
+                    throw new InvalidArgumentException('El valor de "' . $label . '" debe estar entre 1 y 365 días.');
+                }
+            }
+
+            $stmtRule = $this->db->prepare("
+                INSERT INTO settings (setting_key, setting_value, description)
+                VALUES (:key, :value, :description)
+                ON DUPLICATE KEY UPDATE
+                    setting_value = VALUES(setting_value),
+                    description = VALUES(description)
+            ");
+            foreach ($allowedNotificationRules as $key => $label) {
+                if (array_key_exists($key, $notificationRules)) {
+                    $stmtRule->execute([
+                        ':key' => $key,
+                        ':value' => (string)(int)$notificationRules[$key],
+                        ':description' => 'Regla de notificaciones: ' . $label,
+                    ]);
+                }
+            }
+
+            // 3. Guardar configuración de canales en la tabla real `settings`.
+            foreach ($channelConfig as $channelKey => $config) {
+                if (!in_array($channelKey, ['email', 'whatsapp', 'telegram'], true) || !is_array($config)) continue;
+                $settingKey = 'notification_' . $channelKey . '_config';
+                $existingStmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = :key LIMIT 1");
+                $existingStmt->execute([':key' => $settingKey]);
+                $existing = json_decode((string)$existingStmt->fetchColumn(), true) ?: [];
+                if ($channelKey === 'email' && empty($config['password'])) {
+                    $config['password'] = $existing['password'] ?? '';
+                }
                 $stmt = $this->db->prepare("
-                    UPDATE notification_channels 
-                    SET config_data = :config 
-                    WHERE channel_key = :key
+                    INSERT INTO settings (setting_key, setting_value, description)
+                    VALUES (:key, :value, :description)
+                    ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value)
                 ");
                 $stmt->execute([
-                    ':key' => $channelKey,
-                    ':config' => json_encode($config)
+                    ':key' => $settingKey,
+                    ':value' => json_encode($config, JSON_UNESCAPED_UNICODE),
+                    ':description' => 'Configuración del canal ' . $channelKey
                 ]);
             }
 
             $this->db->commit();
             Session::flash('success', 'Configuración guardada correctamente.');
-        } catch (Exception $e) {
-            $this->db->rollBack();
-            Session::flash('error', 'Error al guardar: ' . $e->getMessage());
+        } catch (Throwable $e) {
+            if ($this->db->inTransaction()) {
+                $this->db->rollBack();
+            }
+            error_log('[Willak Settings] ' . $e->getMessage());
+            Session::flash('error', 'No se pudo guardar la configuración. Revisa los registros del servidor.');
         }
 
-        header('Location: ' . APP_URL . '/settings?section=' . $section);
+        header('Location: ' . APP_URL . '/settings?section=' . rawurlencode($section));
         exit;
     }
 
@@ -123,9 +194,9 @@ class SettingsController {
         }
 
         // Obtener configuración actual de la BD
-        $stmt = $this->db->prepare("SELECT config_data FROM notification_channels WHERE channel_key = 'email'");
+        $stmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'notification_email_config'");
         $stmt->execute();
-        $config = json_decode($stmt->fetchColumn(), true);
+        $config = json_decode((string)$stmt->fetchColumn(), true) ?: [];
 
         if (empty($config['host']) || empty($config['username']) || empty($config['password'])) {
             echo json_encode(['success' => false, 'message' => 'Configuración SMTP incompleta. Completa los campos y guarda primero.']);
@@ -180,9 +251,9 @@ class SettingsController {
             exit;
         }
 
-        $stmt = $this->db->prepare("SELECT config_data FROM notification_channels WHERE channel_key = 'telegram'");
+        $stmt = $this->db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'notification_telegram_config'");
         $stmt->execute();
-        $config = json_decode($stmt->fetchColumn(), true);
+        $config = json_decode((string)$stmt->fetchColumn(), true) ?: [];
 
         if (empty($config['bot_token']) || empty($config['chat_id'])) {
             echo json_encode(['success' => false, 'message' => 'Bot Token o Chat ID no configurados.']);
@@ -208,8 +279,34 @@ class SettingsController {
         exit;
     }
 
+    public function actionToggleChannel() {
+        header('Content-Type: application/json; charset=utf-8');
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !Security::validateCsrf($_POST['csrf_token'] ?? '')) {
+            http_response_code(403);
+            echo json_encode(['success' => false, 'message' => 'Solicitud no válida.']);
+            exit;
+        }
+        $channel = $_POST['channel'] ?? '';
+        if (!in_array($channel, ['email', 'whatsapp', 'telegram'], true)) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'message' => 'Canal no válido.']);
+            exit;
+        }
+        $active = !empty($_POST['active']) ? '1' : '0';
+        $stmt = $this->db->prepare("INSERT INTO settings (setting_key, setting_value, description)
+            VALUES (:key, :value, :description)
+            ON DUPLICATE KEY UPDATE setting_value=VALUES(setting_value)");
+        $stmt->execute([
+            ':key' => 'notification_' . $channel . '_active',
+            ':value' => $active,
+            ':description' => 'Canal habilitado'
+        ]);
+        echo json_encode(['success' => true]);
+        exit;
+    }
+
     private function getAllSettings() {
-        $stmt = $this->db->query("SELECT setting_key, setting_value FROM app_settings");
+        $stmt = $this->db->query("SELECT setting_key, setting_value FROM settings");
         $settings = [];
         while ($row = $stmt->fetch()) {
             $settings[$row['setting_key']] = $row['setting_value'];
@@ -219,7 +316,7 @@ class SettingsController {
 
     public function actionResetColors() {
         if ($_SERVER['REQUEST_METHOD'] === 'POST' && Security::validateCsrf($_POST['csrf_token'] ?? '')) {
-            $stmt = $this->db->prepare("UPDATE app_settings SET setting_value = :value WHERE setting_key = :key");
+            $stmt = $this->db->prepare("UPDATE settings SET setting_value = :value WHERE setting_key = :key");
             $stmt->execute([':key' => 'primary_color', ':value' => '#0d47a1']);
             $stmt->execute([':key' => 'accent_color', ':value' => '#ff6f00']);
             

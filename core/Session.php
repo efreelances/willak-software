@@ -3,7 +3,10 @@ class Session {
     public static function start() {
         if (session_status() === PHP_SESSION_NONE) {
             ini_set('session.cookie_httponly', 1);
-            ini_set('session.cookie_secure', isset($_SERVER['HTTPS']));
+            // `isset($_SERVER['HTTPS'])` también es true cuando el servidor
+            // define HTTPS='off'. Eso puede impedir que la cookie viaje por HTTP.
+            $isHttps = !empty($_SERVER['HTTPS']) && strtolower((string)$_SERVER['HTTPS']) !== 'off';
+            ini_set('session.cookie_secure', $isHttps ? '1' : '0');
             ini_set('session.use_strict_mode', 1);
             session_name('WILLAK_SID');
             session_start();

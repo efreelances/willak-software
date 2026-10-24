@@ -24,6 +24,11 @@ class Router {
         $parts = explode('/', $uri);
         $rawModule = $parts[0] ?? 'dashboard';
         $action = $parts[1] ?? 'index';
+        // /logout debe ejecutar actionLogout(); si cae en actionIndex(),
+        // AuthController redirige a usuarios autenticados al dashboard.
+        if ($rawModule === 'logout' && !isset($parts[1])) {
+            $action = 'logout';
+        }
         $param  = $parts[2] ?? null;
 
         // 5. MAPEO DE RUTAS A ARCHIVOS DE CONTROLADOR (¡LA CLAVE!)

@@ -8,7 +8,7 @@ function getAppName() {
     if ($appName === null) {
         try {
             $db = Database::getInstance()->getConnection();
-            $stmt = $db->prepare("SELECT setting_value FROM app_settings WHERE setting_key = 'app_name' LIMIT 1");
+            $stmt = $db->prepare("SELECT setting_value FROM settings WHERE setting_key = 'app_name' LIMIT 1");
             $stmt->execute();
             $result = $stmt->fetchColumn();
             $appName = $result ?: 'Willak'; // Valor por defecto si no existe
@@ -30,7 +30,7 @@ function getSetting($key, $default = '') {
         $settings = [];
         try {
             $db = Database::getInstance()->getConnection();
-            $stmt = $db->query("SELECT setting_key, setting_value FROM app_settings");
+            $stmt = $db->query("SELECT setting_key, setting_value FROM settings");
             while ($row = $stmt->fetch()) {
                 $settings[$row['setting_key']] = $row['setting_value'];
             }

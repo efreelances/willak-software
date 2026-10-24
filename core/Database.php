@@ -14,7 +14,8 @@ class Database {
         try {
             $this->pdo = new PDO($dsn, DB_USER, DB_PASS, $options);
         } catch (PDOException $e) {
-            die('Error de conexión: ' . $e->getMessage());
+            error_log('[Willak database] Connection failed: ' . $e->getMessage());
+            throw new RuntimeException('No se pudo conectar con la base de datos. Revisa la configuración del servidor.');
         }
     }
 

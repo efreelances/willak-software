@@ -41,11 +41,6 @@ class AuthController {
     }
 
     public function actionLogout() {
-        // Debug: Ver qué está pasando
-        error_log("Logout iniciado");
-        error_log("Session ID: " . session_id());
-        error_log("User ID: " . (Session::get('user_id') ?? 'null'));
-        
         $this->auth->logout();
         
         // Forzar redirección

@@ -332,15 +332,15 @@
                                 <div class="row g-3">
                                     <div class="col-md-4">
                                         <label class="form-label">Primer aviso (días antes)</label>
-                                        <input type="number" name="notification_rules[days_1]" class="form-control" value="<?= Security::e($settings['notification_days_1'] ?? '30') ?>">
+                                        <input type="number" name="notification_rules[notification_days_1]" class="form-control" value="<?= Security::e($settings['notification_days_1'] ?? '30') ?>">
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Segundo aviso (días antes)</label>
-                                        <input type="number" name="notification_rules[days_2]" class="form-control" value="<?= Security::e($settings['notification_days_2'] ?? '15') ?>">
+                                        <input type="number" name="notification_rules[notification_days_2]" class="form-control" value="<?= Security::e($settings['notification_days_2'] ?? '15') ?>">
                                     </div>
                                     <div class="col-md-4">
                                         <label class="form-label">Aviso crítico (días antes)</label>
-                                        <input type="number" name="notification_rules[days_3]" class="form-control" value="<?= Security::e($settings['notification_days_3'] ?? '7') ?>">
+                                        <input type="number" name="notification_rules[notification_days_3]" class="form-control" value="<?= Security::e($settings['notification_days_3'] ?? '7') ?>">
                                     </div>
                                 </div>
                             </div>
